@@ -39,7 +39,8 @@ on:
         default: "['3.10']"
   pull_request:
     types: [synchronize, labeled]
-  merge_group:
+  merge_group: {}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -71,7 +72,8 @@ jobs:
 
             if (runs.workflow_runs.length === 0) {
               console.log('No completed workflow runs found today');
-              return core.setOutput('success', 'true');
+              core.setOutput('success', 'true');
+              return;
             }
 
             // Check if any runs today were successful
@@ -86,9 +88,12 @@ jobs:
     name: Should Run CI
     runs-on: ubuntu-latest
     outputs:
-      should-run-ci: ${{ (needs.check-nightly-status.outputs.should-proceed == 'true' || github.event_name == 'workflow_dispatch') && ((contains( github.event.pull_request.labels.*.name, 'lgtm') && github.event.pull_request.draft == false) || (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event_name == 'merge_group')) }}
+      should-run-ci: ${{ (
+          (needs.check-nightly-status.outputs.should-proceed == 'true' || github.event_name == 'workflow_dispatch')
+          && ((contains(github.event.pull_request.labels.*.name, 'lgtm') && github.event.pull_request.draft == false)
+          || (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event_name == 'merge_group'))
+      ) }}
     steps:
-      #  Do anything just to make the job run
       - run: echo "Debug CI Condition"
       - run: echo "Labels -> ${{ join(github.event.pull_request.labels.*.name, ',') }}"
       - run: echo "IsDraft -> ${{ github.event.pull_request.draft }}"
@@ -112,7 +117,6 @@ jobs:
       workspace: ${{ steps.filter.outputs.workspace }}
       api: ${{ steps.filter.outputs.api }}
       database: ${{ steps.filter.outputs.database }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -127,27 +131,38 @@ jobs:
   test-backend:
     needs: path-filter
     name: Run Backend Tests
-    if: ${{ needs.path-filter.outputs.python == 'true'}}
+    if: ${{ needs.path-filter.outputs.python == 'true' }}
     uses: ./.github/workflows/python_test.yml
     with:
       python-versions: ${{ inputs.python-versions || '["3.10"]' }}
+
   test-frontend:
     needs: path-filter
     name: Run Frontend Tests
-    if: ${{ needs.path-filter.outputs.frontend == 'true' || needs.path-filter.outputs.frontend-tests == 'true' || needs.path-filter.outputs.components-changes == 'true' || needs.path-filter.outputs.starter-projects-changes == 'true' || needs.path-filter.outputs.starter-projects == 'true' || needs.path-filter.outputs.components == 'true' || needs.path-filter.outputs.workspace == 'true' || needs.path-filter.outputs.api == 'true' || needs.path-filter.outputs.database == 'true' }}
+    if: ${{ 
+      needs.path-filter.outputs.frontend == 'true' || 
+      needs.path-filter.outputs.frontend-tests == 'true' || 
+      needs.path-filter.outputs.components-changes == 'true' || 
+      needs.path-filter.outputs.starter-projects-changes == 'true' || 
+      needs.path-filter.outputs.starter-projects == 'true' || 
+      needs.path-filter.outputs.components == 'true' || 
+      needs.path-filter.outputs.workspace == 'true' || 
+      needs.path-filter.outputs.api == 'true' || 
+      needs.path-filter.outputs.database == 'true' 
+    }}
     uses: ./.github/workflows/typescript_test.yml
     with:
       tests_folder: ${{ inputs.frontend-tests-folder }}
       release: ${{ inputs.release || false }}
     secrets:
-      OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
-      STORE_API_KEY: "${{ secrets.STORE_API_KEY }}"
-      ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}"
-      TAVILY_API_KEY: "${{ secrets.TAVILY_API_KEY }}"
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      STORE_API_KEY: ${{ secrets.STORE_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
 
   lint-backend:
     needs: path-filter
-    if: ${{ needs.path-filter.outputs.python == 'true'}}
+    if: ${{ needs.path-filter.outputs.python == 'true' }}
     name: Lint Backend
     uses: ./.github/workflows/lint-py.yml
 
@@ -157,28 +172,25 @@ jobs:
     name: Test Docs Build
     uses: ./.github/workflows/docs_test.yml
 
-  # https://github.com/langchain-ai/langchain/blob/master/.github/workflows/check_diffs.yml
   ci_success:
-    name: "CI Success"
+    name: CI Success
     needs:
-      [
-        test-backend,
-        test-frontend,
-        lint-backend,
-        test-docs-build,
-        set-ci-condition,
-      ]
-
+      - test-backend
+      - test-frontend
+      - lint-backend
+      - test-docs-build
+      - set-ci-condition
     if: always()
     runs-on: ubuntu-latest
     env:
       JOBS_JSON: ${{ toJSON(needs) }}
       RESULTS_JSON: ${{ toJSON(needs.*.result) }}
-      EXIT_CODE: ${{!contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.set-ci-condition.outputs.should-run-ci == 'true' && '0' || '1'}}
+      EXIT_CODE: ${{ (!contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && (needs.set-ci-condition.outputs.should-run-ci == 'true')) ? '0' : '1' }}
     steps:
-      - name: "CI Success"
-        run: |
-          echo $JOBS_JSON
-          echo $RESULTS_JSON
+      - name: CI Success
+        run: 
+          echo "$JOBS_JSON"
+          echo "$RESULTS_JSON"
           echo "Exiting with $EXIT_CODE"
           exit $EXIT_CODE
+        
